@@ -1,0 +1,10 @@
+# Secrets — never commit your AMO API key/secret
+scripts/config.json
+
+# Build artifacts (the .xpi files under dist/ ARE committed for auto-update)
+dist/*.zip
+cardappraiser-extension.zip
+
+# Python
+__pycache__/
+*.pyc

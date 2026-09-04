@@ -1,0 +1,60 @@
+{
+  "manifest_version": 3,
+  "name": "Whatnot Card Appraiser",
+  "version": "0.1.5",
+  "description": "Shows live PriceCharting market prices for Pokémon cards shown on Whatnot auction streams.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "card-appraiser@joshhavens.local",
+      "strict_min_version": "128.0",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
+    }
+  },
+  "permissions": [
+    "storage",
+    "activeTab",
+    "tabs",
+    "scripting"
+  ],
+  "host_permissions": [
+    "*://*.whatnot.com/*",
+    "*://*.pricecharting.com/*",
+    "https://storage.googleapis.com/images.pricecharting.com/*",
+    "https://commondatastorage.googleapis.com/images.pricecharting.com/*",
+    "https://api.anthropic.com/*"
+  ],
+  "background": {
+    "scripts": [
+      "background/pricecharting.js",
+      "background/vision.js",
+      "background/cardcv.js",
+      "background/background.js"
+    ]
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.whatnot.com/*"],
+      "js": [
+        "content/util.js",
+        "content/detector.js",
+        "content/overlay.js"
+      ],
+      "css": ["content/overlay.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
+  "action": {
+    "default_title": "Whatnot Card Appraiser",
+    "default_popup": "options/options.html"
+  },
+  "icons": {
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

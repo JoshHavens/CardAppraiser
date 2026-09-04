@@ -1,0 +1,139 @@
+/* Whatnot Card Appraiser overlay */
+#ca-panel.ca-panel {
+  position: fixed;
+  top: 84px;
+  right: 16px;
+  z-index: 2147483647;
+  width: 268px;
+  background: #14161c;
+  color: #e8eaed;
+  font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  border: 1px solid #2b2f3a;
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  user-select: none;
+}
+#ca-panel .ca-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  background: #1b1e27;
+  cursor: move;
+  border-bottom: 1px solid #2b2f3a;
+}
+#ca-panel .ca-title { font-weight: 600; }
+#ca-panel .ca-status {
+  flex: 1;
+  font-size: 11px;
+  color: #9aa0ac;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#ca-panel .ca-btn {
+  background: #2a2e3a;
+  color: #e8eaed;
+  border: none;
+  border-radius: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+}
+#ca-panel .ca-btn:hover { background: #3a3f4d; }
+#ca-panel .ca-primary { background: #3b6cf0; }
+#ca-panel .ca-primary:hover { background: #4d7bf5; }
+
+#ca-panel .ca-thumb {
+  display: block;
+  width: 100%;
+  max-height: 150px;
+  object-fit: contain;
+  background: #0c0d11;
+}
+#ca-panel .ca-idrow { display: flex; gap: 6px; padding: 8px 10px 0; }
+#ca-panel .ca-in {
+  flex: 1;
+  min-width: 0;
+  background: #0f1117;
+  color: #e8eaed;
+  border: 1px solid #2b2f3a;
+  border-radius: 6px;
+  padding: 5px 7px;
+  font-size: 12px;
+}
+#ca-panel .ca-num { flex: 0 0 46px; }
+#ca-panel .ca-actions { display: flex; gap: 6px; padding: 8px 10px; }
+#ca-panel .ca-actions .ca-btn { flex: 1; }
+
+#ca-panel .ca-match {
+  padding: 0 10px 6px;
+  font-size: 11px;
+  color: #9aa0ac;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+#ca-panel .ca-select {
+  flex: 1;
+  min-width: 0;
+  background: #0f1117;
+  color: #e8eaed;
+  border: 1px solid #2b2f3a;
+  border-radius: 6px;
+  padding: 3px;
+  font-size: 11px;
+}
+#ca-panel .ca-link { color: #7aa2ff; text-decoration: none; }
+#ca-panel .ca-link:hover { text-decoration: underline; }
+#ca-panel .ca-ext { margin-left: auto; }
+
+#ca-panel .ca-matchimg {
+  display: block;
+  max-width: 140px;
+  max-height: 190px;
+  margin: 2px auto 8px;
+  border-radius: 6px;
+  border: 1px solid #2b2f3a;
+  background: #0c0d11;
+  object-fit: contain;
+}
+
+#ca-panel .ca-prices { padding: 0 10px 8px; }
+#ca-panel .ca-nm {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 6px 8px;
+  margin: 0 0 6px;
+  background: #12281a;
+  border: 1px solid #2f6b3f;
+  border-radius: 7px;
+}
+#ca-panel .ca-nm-label { font-size: 12px; color: #9fe0af; font-weight: 600; letter-spacing: .02em; }
+#ca-panel .ca-nm-val { font-size: 20px; font-weight: 700; color: #7ee787; font-variant-numeric: tabular-nums; }
+#ca-panel .ca-table { width: 100%; border-collapse: collapse; }
+#ca-panel .ca-table td { padding: 3px 4px; border-bottom: 1px solid #23262f; }
+#ca-panel .ca-g { color: #9aa0ac; }
+#ca-panel .ca-v { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+#ca-panel .ca-hl { background: #16233a; }
+#ca-panel .ca-hl .ca-v { color: #7aa2ff; }
+#ca-panel .ca-note { font-size: 10px; color: #6b7280; margin-top: 4px; }
+
+#ca-panel .ca-foot {
+  padding: 5px 10px;
+  font-size: 10px;
+  color: #6b7280;
+  border-top: 1px solid #23262f;
+  min-height: 12px;
+}
+
+#ca-panel.ca-collapsed .ca-thumb,
+#ca-panel.ca-collapsed .ca-idrow,
+#ca-panel.ca-collapsed .ca-actions,
+#ca-panel.ca-collapsed .ca-match,
+#ca-panel.ca-collapsed .ca-matchimg,
+#ca-panel.ca-collapsed .ca-prices,
+#ca-panel.ca-collapsed .ca-foot { display: none; }

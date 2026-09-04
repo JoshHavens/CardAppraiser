@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Card Appraiser Settings</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <h1>Whatnot Card Appraiser</h1>
+
+  <section>
+    <h2>Card identification</h2>
+    <label class="field">
+      <span>Engine</span>
+      <select id="engine">
+        <option value="photo">PriceCharting Photo Search (free, recommended)</option>
+        <option value="vision">Claude Vision (needs API key)</option>
+      </select>
+    </label>
+    <p class="hint">Auto-detection of a new card is always free (local frame diff). The engine only controls how a detected card is identified. <b>Photo Search</b> uses PriceCharting's own image recognition — free and no setup.</p>
+
+    <div id="vision-fields">
+      <label class="field">
+        <span>Anthropic API key</span>
+        <input id="apiKey" type="password" placeholder="sk-ant-..." autocomplete="off" />
+      </label>
+      <label class="field">
+        <span>Model</span>
+        <select id="model">
+          <option value="claude-haiku-4-5">Claude Haiku 4.5 (cheapest, ~$0.002/card)</option>
+          <option value="claude-sonnet-5">Claude Sonnet 5 (more accurate, ~$0.004/card)</option>
+        </select>
+      </label>
+      <p class="hint">Your key is stored only in this browser's local extension storage and sent directly to Anthropic when a new card is detected. It is visible to anyone with devtools on this machine — use a dedicated, low-limit key.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Detection tuning</h2>
+    <label class="field">
+      <span>Poll interval (ms)</span>
+      <input id="pollInterval" type="number" min="300" step="100" />
+    </label>
+    <label class="field">
+      <span>Change sensitivity (diff threshold)</span>
+      <input id="diffThreshold" type="number" min="2" step="1" />
+    </label>
+    <p class="hint">Lower threshold = more sensitive (more triggers). Turn on debug to watch the live diff score in the overlay footer.</p>
+    <label class="field checkbox">
+      <input id="debug" type="checkbox" />
+      <span>Show debug diff score</span>
+    </label>
+  </section>
+
+  <section>
+    <h2>Display</h2>
+    <label class="field">
+      <span>Highlight grade</span>
+      <select id="highlightGrade">
+        <option>Ungraded</option>
+        <option>Grade 7</option>
+        <option>Grade 8</option>
+        <option>Grade 9</option>
+        <option>Grade 9.5</option>
+        <option>PSA 10</option>
+      </select>
+    </label>
+  </section>
+
+  <div class="bar">
+    <button id="save">Save</button>
+    <span id="saved" class="saved"></span>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>

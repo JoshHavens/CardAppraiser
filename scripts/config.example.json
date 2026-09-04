@@ -1,0 +1,8 @@
+{
+  "github_user": "YOUR_GITHUB_USERNAME",
+  "github_repo": "cardappraiser",
+  "github_branch": "main",
+  "amo_api_key": "YOUR_AMO_API_KEY",
+  "amo_api_secret": "YOUR_AMO_API_SECRET",
+  "addon_id": "card-appraiser@joshhavens.local"
+}
