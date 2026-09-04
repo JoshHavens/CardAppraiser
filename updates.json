@@ -1,7 +1,12 @@
 {
   "addons": {
     "card-appraiser@joshhavens.local": {
-      "updates": []
+      "updates": [
+        {
+          "version": "0.1.6",
+          "update_link": "https://raw.githubusercontent.com/JoshHavens/CardAppraiser/main/dist/cardappraiser-0.1.6.xpi"
+        }
+      ]
     }
   }
 }
