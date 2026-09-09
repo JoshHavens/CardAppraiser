@@ -3,8 +3,8 @@
     "card-appraiser@joshhavens.local": {
       "updates": [
         {
-          "version": "0.1.6",
-          "update_link": "https://raw.githubusercontent.com/JoshHavens/CardAppraiser/main/dist/cardappraiser-0.1.6.xpi"
+          "version": "0.1.7",
+          "update_link": "https://raw.githubusercontent.com/JoshHavens/CardAppraiser/main/dist/cardappraiser-0.1.7.xpi"
         }
       ]
     }
