@@ -61,11 +61,90 @@
     return Object.assign(defaults, stored);
   }
 
+  // ---- text search via a hidden tab ----------------------------------------
+  // PriceCharting's /search-products is behind Cloudflare's JS challenge, which
+  // a background fetch can't pass. A real navigation passes it, so we drive a
+  // hidden (tabs.hide) background tab: navigate it to the search, wait for the
+  // results table to render, then read the rows back with scripting. Invisible
+  // to the user; results still show inline in the panel.
+  let searchTabId = null;
+
+  async function getSearchTab() {
+    if (searchTabId != null) {
+      try { await api.tabs.get(searchTabId); return searchTabId; }
+      catch (e) { searchTabId = null; }
+    }
+    const tab = await api.tabs.create({ url: "https://www.pricecharting.com/", active: false });
+    searchTabId = tab.id;
+    try { await api.tabs.hide(searchTabId); } catch (e) { /* needs tabHide perm; ok if visible */ }
+    return searchTabId;
+  }
+
+  function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+  async function textSearchViaTab(query) {
+    const tabId = await getSearchTab();
+    const url = "https://www.pricecharting.com/search-products?q=" +
+      encodeURIComponent(query) + "&type=prices";
+    await api.tabs.update(tabId, { url });
+
+    // Wait for the results table (or a redirected product page) to appear —
+    // the Cloudflare "Just a moment" page auto-reloads to the real page.
+    const deadline = Date.now() + 20000;
+    let rows = [];
+    while (Date.now() < deadline) {
+      await sleep(500);
+      let out;
+      try {
+        [out] = await api.scripting.executeScript({ target: { tabId }, func: scrapeSearch });
+      } catch (e) { continue; } // challenge page can block scripting briefly
+      if (out && out.result && out.result.ready) { rows = out.result.rows; break; }
+    }
+    return rows.map((r) => Object.assign(r, {
+      number: self.PriceCharting.extractNumber(r.href) || self.PriceCharting.extractNumber(r.title),
+      edition: self.PriceCharting.extractEdition(r.title),
+      inline: {},
+    }));
+  }
+
+  // Runs INSIDE the hidden tab (must be self-contained).
+  function scrapeSearch() {
+    const BASE = "https://www.pricecharting.com";
+    if (/Just a moment/i.test(document.title)) return { ready: false, rows: [] };
+    const trs = Array.from(document.querySelectorAll("#games_table tbody tr"));
+    const rows = [];
+    for (const tr of trs) {
+      const link = tr.querySelector("td.title a, a[href*='/game/']");
+      if (!link) continue;
+      const href = link.getAttribute("href") || "";
+      const titleCell = tr.querySelector("td.title");
+      const setCell = tr.querySelector("td.console");
+      const img = tr.querySelector("td.image img");
+      rows.push({
+        title: (titleCell || link).textContent.trim().replace(/\s+/g, " "),
+        set: setCell ? setCell.textContent.trim().replace(/\s+/g, " ") : "",
+        url: href.startsWith("http") ? href : BASE + href,
+        href,
+        image: img ? (img.getAttribute("src") || "").replace(/\/60\.jpg$/, "/240.jpg") : "",
+      });
+    }
+    // Exact match redirects straight to a product page.
+    if (!rows.length && document.getElementById("product_name")) {
+      const canon = (document.querySelector('link[rel="canonical"]') || {}).href || location.href;
+      rows.push({
+        title: document.getElementById("product_name").textContent.trim().replace(/\s+/g, " "),
+        set: "", url: canon, href: canon, image: "",
+      });
+    }
+    const ready = rows.length > 0 || !!document.getElementById("product_name");
+    return { ready, rows };
+  }
+
   /** Full lookup: identity -> ranked results -> full prices for best match. */
   async function lookupByIdentity(identity) {
     const query = buildQuery(identity);
     if (!query) throw new Error("Nothing to search for.");
-    const results = await self.PriceCharting.search(query);
+    const results = await textSearchViaTab(query);
     if (!results.length) return { query, results: [], best: null, prices: null };
 
     const ranked = self.PriceCharting.rankResults(results, identity);

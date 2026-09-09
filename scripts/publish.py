@@ -251,7 +251,7 @@ def main():
     if no_push:
         print("Done (skipped git push). Commit dist/, updates.json, manifest.json yourself.")
         return
-    git("add", "manifest.json", "updates.json", xpi_rel)
+    git("add", "-A")  # include the source we just built from (config.json is gitignored)
     git("commit", "-m", f"Release v{version}")
     git("push", "origin", cfg["github_branch"])
     print(f"\nReleased v{version}. Firefox auto-updates within ~24h, or force it now:")
