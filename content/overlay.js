@@ -119,11 +119,24 @@
   }
 
   // ------------------------------------------------------------- video -------
-  function findVideo() {
+  // Collect <video>s from the top document AND any same-origin iframes. eBay
+  // Live hosts the player in a same-origin iframe (/ebaylive/events/<id>/player),
+  // so the video isn't in the top document; Whatnot's is top-level.
+  function collectVideos() {
     const vids = Array.from(document.querySelectorAll("video"));
-    // Prefer the largest playing video.
+    for (const f of document.querySelectorAll("iframe")) {
+      let doc = null;
+      try { doc = f.contentDocument; } catch (e) { doc = null; } // cross-origin → skip
+      if (doc) {
+        try { vids.push(...doc.querySelectorAll("video")); } catch (e) {}
+      }
+    }
+    return vids;
+  }
+
+  function findVideo() {
     let best = null, bestArea = 0;
-    for (const v of vids) {
+    for (const v of collectVideos()) {
       const r = v.getBoundingClientRect();
       const area = r.width * r.height;
       if (area > bestArea) { best = v; bestArea = area; }
@@ -132,13 +145,13 @@
   }
 
   function watchForVideo() {
-    const found = findVideo();
-    if (found && found !== video) attachVideo(found);
-    const obs = new MutationObserver(() => {
-      const v = findVideo();
-      if (v && v !== video) attachVideo(v);
-    });
+    const tryAttach = () => { const v = findVideo(); if (v && v !== video) attachVideo(v); };
+    tryAttach();
+    const obs = new MutationObserver(tryAttach);
     obs.observe(document.body, { childList: true, subtree: true });
+    // Poll too: the MutationObserver on the top body won't see a video that
+    // appears inside an iframe's own document, and streams swap on SPA nav.
+    setInterval(tryAttach, 2000);
   }
 
   function attachVideo(v) {

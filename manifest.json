@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Whatnot Card Appraiser",
-  "version": "0.1.8",
-  "description": "Shows live PriceCharting market prices for Pokémon cards shown on Whatnot auction streams.",
+  "version": "0.1.9",
+  "description": "Shows live PriceCharting market prices for Pokémon cards shown on Whatnot and eBay Live auction streams.",
   "browser_specific_settings": {
     "gecko": {
       "id": "card-appraiser@joshhavens.local",
@@ -24,6 +24,7 @@
   ],
   "host_permissions": [
     "*://*.whatnot.com/*",
+    "*://*.ebay.com/*",
     "*://*.pricecharting.com/*",
     "https://storage.googleapis.com/images.pricecharting.com/*",
     "https://commondatastorage.googleapis.com/images.pricecharting.com/*",
@@ -40,7 +41,8 @@
   "content_scripts": [
     {
       "matches": [
-        "*://*.whatnot.com/*"
+        "*://*.whatnot.com/*",
+        "*://*.ebay.com/ebaylive/*"
       ],
       "js": [
         "content/util.js",
