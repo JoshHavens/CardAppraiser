@@ -182,26 +182,36 @@ def sign_via_amo(cfg, zip_path, version):
         die(f"version create failed (HTTP {status}): {resp}")
     version_id = resp["id"]
 
-    # 4) Poll for the signed file and download it
+    # 4) Poll for the signed file and download it. AMO signs asynchronously, so
+    # the file URL can appear BEFORE signing finishes — download the unsigned
+    # file then and Firefox rejects it ("could not be installed... not verified").
+    # So keep downloading until the .xpi actually contains Mozilla's signature.
     print("  waiting for signature ...")
     ver_url = f"{API_BASE}/addons/addon/{guid}/versions/{version_id}/"
-    for _ in range(60):
+    for _ in range(90):
         status, resp = api_request("GET", ver_url, cfg)
         fileobj = resp.get("file") or {}
         dl = fileobj.get("url")
         if dl:
-            # For unlisted add-ons the file at this URL is the signed one. Just
-            # try it; a valid .xpi starts with the ZIP magic "PK".
             st, data = api_request("GET", dl, cfg, expect_json=False)
-            if st == 200 and isinstance(data, (bytes, bytearray)) and data[:2] == b"PK":
+            if st == 200 and isinstance(data, (bytes, bytearray)) and data[:2] == b"PK" and is_signed_xpi(data):
                 print("  downloading signed .xpi ...")
                 xpi_path = os.path.join(DIST_DIR, f"cardappraiser-{version}.xpi")
                 with open(xpi_path, "wb") as out:
                     out.write(data)
                 return xpi_path
         time.sleep(4)
-    die("timed out waiting for the signed file. The version may still be signing — "
-        "re-run in a minute, or check the AMO developer hub.")
+    die("timed out waiting for the SIGNED file. The version may still be signing — "
+        "re-run in a minute, or download the signed .xpi from the AMO developer hub.")
+
+
+def is_signed_xpi(data):
+    """True if the .xpi bytes contain Mozilla's signature (META-INF/mozilla.*)."""
+    try:
+        z = zipfile.ZipFile(io.BytesIO(data))
+        return any(n.lower().startswith("meta-inf/mozilla") for n in z.namelist())
+    except Exception:
+        return False
 
 
 # ------------------------------------------------------------- updates.json ---
