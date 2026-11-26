@@ -257,17 +257,24 @@
             // outlier. Crops range from generous (avoid clipping the card) to
             // tight (small/far cards). ~1-2s. Cookies handled by ensureSession.
             const still = msg.dataUrl;
-            const CENTER_CROPS = [
-              { label: "c0", frac: { x: 0.24, y: 0.18, w: 0.54, h: 0.62 } }, // medium center
-              { label: "c1", frac: { x: 0.30, y: 0.22, w: 0.56, h: 0.62 } }, // center-right
-              { label: "c2", frac: { x: 0.16, y: 0.10, w: 0.68, h: 0.78 } }, // large
-              { label: "c3", frac: { x: 0.10, y: 0.06, w: 0.80, h: 0.88 } }, // very large (no clip)
-              { label: "c4", frac: { x: 0.30, y: 0.26, w: 0.44, h: 0.52 } }, // tight (small/far card)
+            // A spatial GRID of card-shaped crops (left/center/right × upper/lower,
+            // plus one large) tiles the frame so the card is well-framed in at
+            // least one crop no matter where it's held/stood. PriceCharting's own
+            // recognizer judges which crop framed it (lowest distance wins) — more
+            // robust than guessing the card's location locally.
+            const GRID_CROPS = [
+              { label: "g0", frac: { x: 0.05, y: 0.12, w: 0.52, h: 0.64 } }, // left-upper
+              { label: "g1", frac: { x: 0.24, y: 0.12, w: 0.52, h: 0.64 } }, // center-upper
+              { label: "g2", frac: { x: 0.43, y: 0.12, w: 0.52, h: 0.64 } }, // right-upper
+              { label: "g3", frac: { x: 0.05, y: 0.28, w: 0.52, h: 0.64 } }, // left-lower
+              { label: "g4", frac: { x: 0.24, y: 0.28, w: 0.52, h: 0.64 } }, // center-lower
+              { label: "g5", frac: { x: 0.43, y: 0.28, w: 0.52, h: 0.64 } }, // right-lower
+              { label: "g6", frac: { x: 0.14, y: 0.08, w: 0.72, h: 0.84 } }, // large / close card
             ];
             const fastSettings = await getSettings();
             const lang = fastSettings.photoLanguage; // "" All | "english" | "japanese"
             await self.PriceCharting.ensureSession();
-            const settled = await Promise.all(CENTER_CROPS.map(async (cc) => {
+            const settled = await Promise.all(GRID_CROPS.map(async (cc) => {
               try {
                 const crop = await self.CardCV.cropFrac(still, cc.frac, 760);
                 const r = await self.PriceCharting.photoSearch(crop, "pokemon-cards", lang);
