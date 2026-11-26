@@ -9,6 +9,7 @@
     pollInterval: 1000,
     highlightGrade: "Ungraded",
     diffThreshold: 12,
+    photoLanguage: "",
     debug: false,
   };
 
@@ -26,6 +27,7 @@
     $("pollInterval").value = s.pollInterval;
     $("diffThreshold").value = s.diffThreshold;
     $("highlightGrade").value = s.highlightGrade;
+    $("photoLanguage").value = s.photoLanguage;
     $("debug").checked = !!s.debug;
     toggleVision();
   }
@@ -38,6 +40,7 @@
       pollInterval: Math.max(300, parseInt($("pollInterval").value, 10) || 1000),
       diffThreshold: Math.max(2, parseInt($("diffThreshold").value, 10) || 12),
       highlightGrade: $("highlightGrade").value,
+      photoLanguage: $("photoLanguage").value,
       debug: $("debug").checked,
     };
     await api.storage.local.set(s);

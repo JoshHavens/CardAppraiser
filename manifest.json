@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Whatnot Card Appraiser",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Shows live PriceCharting market prices for Pokémon cards shown on Whatnot and eBay Live auction streams.",
   "browser_specific_settings": {
     "gecko": {

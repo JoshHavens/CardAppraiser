@@ -245,7 +245,9 @@
       const fd = new FormData();
       fd.append("img", blob, "card.jpg");
       fd.append("category", category || "pokemon-cards");
-      fd.append("language", language || "english");
+      // "" = All (matches English AND Japanese). Hardcoding "english" misses the
+      // many Japanese cards shown on these streams. language===undefined -> All.
+      fd.append("language", language == null ? "" : language);
       return fd;
     };
     const post = () => fetch(BASE + "/search-by-photo", { method: "POST", body: buildBody(), credentials: "include" });

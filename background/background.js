@@ -55,6 +55,7 @@
       pollInterval: 1000,
       highlightGrade: "Ungraded",
       diffThreshold: 12,
+      photoLanguage: "", // "" = All (English + Japanese), "english", "japanese"
       debug: false,
     };
     const stored = await api.storage.local.get(defaults);
@@ -263,11 +264,13 @@
               { label: "c3", frac: { x: 0.10, y: 0.06, w: 0.80, h: 0.88 } }, // very large (no clip)
               { label: "c4", frac: { x: 0.30, y: 0.26, w: 0.44, h: 0.52 } }, // tight (small/far card)
             ];
+            const fastSettings = await getSettings();
+            const lang = fastSettings.photoLanguage; // "" All | "english" | "japanese"
             await self.PriceCharting.ensureSession();
             const settled = await Promise.all(CENTER_CROPS.map(async (cc) => {
               try {
                 const crop = await self.CardCV.cropFrac(still, cc.frac, 760);
-                const r = await self.PriceCharting.photoSearch(crop);
+                const r = await self.PriceCharting.photoSearch(crop, "pokemon-cards", lang);
                 return { label: cc.label, crop, results: r.results, bestDistance: r.bestDistance };
               } catch (e) {
                 return { label: cc.label, error: String(e && e.message ? e.message : e) };

@@ -19,6 +19,16 @@
     </label>
     <p class="hint">Auto-detection of a new card is always free (local frame diff). The engine only controls how a detected card is identified. <b>Photo Search</b> uses PriceCharting's own image recognition — free and no setup.</p>
 
+    <label class="field">
+      <span>Card language</span>
+      <select id="photoLanguage">
+        <option value="">All (English + Japanese)</option>
+        <option value="english">English only</option>
+        <option value="japanese">Japanese only</option>
+      </select>
+    </label>
+    <p class="hint">Streams often show Japanese cards. <b>All</b> matches both; narrow it only if you get cross-language mismatches.</p>
+
     <div id="vision-fields">
       <label class="field">
         <span>Anthropic API key</span>
