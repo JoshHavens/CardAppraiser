@@ -80,24 +80,30 @@
   }
 
   // Fuzzy-match OCR tokens against the species list. Returns the best
-  // { name, tok, dist, norm } or null. `norm` = editDistance / nameLength; a
-  // lower norm is a tighter match. We keep the threshold tight so garbled art
-  // text / background cards don't produce false hits.
+  // { name, tok, norm } or null. `norm` = editDistance / nameLength (lower is
+  // tighter). Thresholds scale with name length — longer names tolerate more
+  // absolute OCR slips — and we also try aligning on the name's suffix, since
+  // glare mangles leading letters ("Wobbuffet" -> "vwobbuffet"/"yvyobbuffet").
+  // Still tight enough that garbled art text / background cards rarely hit.
   function matchSpecies(text, list) {
     const toks = [...new Set((text.toLowerCase().match(/[a-z]{3,}/g) || []))];
     let best = null;
     for (const t of toks) {
       for (const name of list) {
-        if (Math.abs(name.length - t.length) > 2) continue;
-        const d = lev(t, name);
-        const norm = d / name.length;
-        if (norm > 0.25) continue;
+        if (Math.abs(name.length - t.length) > 3) continue;
+        const cap = name.length >= 8 ? 0.34 : name.length >= 6 ? 0.30 : 0.22;
+        let norm = lev(t, name) / name.length;
+        if (t.length > name.length) {
+          // leading junk: compare the tail of the token against the name
+          norm = Math.min(norm, lev(t.slice(t.length - name.length), name) / name.length);
+        }
+        if (norm > cap) continue;
         if (
           !best ||
           norm < best.norm ||
           (norm === best.norm && name.length > best.name.length)
         ) {
-          best = { name, tok: t, dist: d, norm };
+          best = { name, tok: t, norm };
         }
       }
     }
@@ -125,7 +131,7 @@
         const ctx = c.getContext("2d");
         ctx.imageSmoothingQuality = "high";
         ctx.drawImage(img, 0, 0, dw, dh);
-        const maskTop = opts.maskTop != null ? opts.maskTop : 0.14;
+        const maskTop = opts.maskTop != null ? opts.maskTop : 0;
         if (maskTop > 0) {
           ctx.fillStyle = "#000";
           ctx.fillRect(0, 0, dw, Math.round(dh * maskTop));
@@ -137,18 +143,33 @@
     });
   }
 
+  async function recognizeText(w, canvas, psm) {
+    await w.setParameters({ tessedit_pageseg_mode: String(psm) });
+    const { data } = await w.recognize(canvas);
+    return data.text || "";
+  }
+
   /**
    * Identify the card's species name from a still (data URL).
    * Returns { name, score, tok, tokens }. name is null when nothing matched.
+   *
+   * Two passes: PSM 11 (sparse) first — fast and best for clean names; if it
+   * finds nothing, PSM 6 (uniform block) often rescues stylized names over
+   * busy full-art (e.g. "Wobbuffet" -> "rwebbuffet"). Combine both texts.
    */
   async function identifyName(dataUrl, opts) {
     opts = opts || {};
     const list = await loadNames();
     const w = await getWorker();
-    const canvas = await prep(dataUrl, { maxW: opts.maxW || 900, maskTop: opts.maskTop });
-    const { data } = await w.recognize(canvas);
-    const m = matchSpecies(data.text || "", list);
-    const tokens = [...new Set(((data.text || "").toLowerCase().match(/[a-z]{3,}/g) || []))].slice(0, 30);
+    const canvas = await prep(dataUrl, { maxW: opts.maxW || 1000, maskTop: opts.maskTop });
+
+    let text = await recognizeText(w, canvas, 11);
+    let m = matchSpecies(text, list);
+    if (!m) {
+      text += " " + (await recognizeText(w, canvas, 6));
+      m = matchSpecies(text, list);
+    }
+    const tokens = [...new Set((text.toLowerCase().match(/[a-z]{3,}/g) || []))].slice(0, 30);
     return {
       name: m ? cap(m.name) : null,
       score: m ? +(1 - m.norm).toFixed(2) : 0,

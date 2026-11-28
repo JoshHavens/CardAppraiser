@@ -137,3 +137,11 @@
 #ca-panel.ca-collapsed .ca-matchimg,
 #ca-panel.ca-collapsed .ca-prices,
 #ca-panel.ca-collapsed .ca-foot { display: none; }
+
+#ca-panel .ca-diag {
+  padding: 2px 10px 5px;
+  font-size: 9px;
+  color: #4b5563;
+  min-height: 10px;
+}
+#ca-panel.ca-collapsed .ca-diag { display: none; }

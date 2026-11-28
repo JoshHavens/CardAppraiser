@@ -21,6 +21,22 @@
   let busy = false;
   let ui = {};
 
+  // OCR identify loop: a seller often holds a card at a readable distance only
+  // briefly (and wiggles / zooms). Rather than one-shot on "new card", we keep
+  // re-reading the live frame while it's steady until a confident name is found
+  // for the current scene, then stop until the scene changes (big motion).
+  let identified = false;      // have a confident ID for the current scene
+  let ocrAttempts = 0;
+  let lastOcrAt = 0;
+  const OCR_GAP_MS = 1300;      // min gap between OCR attempts
+  const OCR_MAX_ATTEMPTS = 12;  // give up re-reading a scene after this many
+  const IS_EBAY = /ebay\.com/i.test(location.hostname);
+  // eBay Live burns closed captions into the video (mask them); Whatnot doesn't,
+  // and masking there would clip card names that sit high in a close-up frame.
+  const MASK_TOP = IS_EBAY ? 0.12 : 0;
+
+  function resetScene() { identified = false; ocrAttempts = 0; lastOcrAt = 0; }
+
   // Automatic best-effort crops (fractions of the frame). PriceCharting's CV
   // needs the card filling most of the image, so we try several centered crops
   // from tight to full and let its own match-distance score pick the winner —
@@ -62,7 +78,7 @@
       el("button", { class: "ca-btn ca-primary", id: "ca-search", text: "Search",
         onClick: () => lookupFromFields() }),
       el("button", { class: "ca-btn", id: "ca-rescan", text: "Re-scan frame",
-        onClick: () => triggerCapture(true) }),
+        onClick: () => { resetScene(); triggerCapture(true); } }),
     ]);
 
     const match = el("div", { class: "ca-match", id: "ca-match" });
@@ -70,8 +86,9 @@
     matchImg.style.display = "none";
     const prices = el("div", { class: "ca-prices", id: "ca-prices" });
     const foot = el("div", { class: "ca-foot", id: "ca-foot" });
+    const diag = el("div", { class: "ca-diag", id: "ca-diag" });
 
-    panel.append(header, thumb, idRow, idRow2, actions, match, matchImg, prices, foot);
+    panel.append(header, thumb, idRow, idRow2, actions, match, matchImg, prices, foot, diag);
     document.body.appendChild(panel);
     makeDraggable(panel, header);
 
@@ -87,6 +104,7 @@
       matchImg,
       prices,
       foot,
+      diag: panel.querySelector("#ca-diag"),
     };
     ui.name.addEventListener("keydown", (e) => { if (e.key === "Enter") lookupFromFields(); });
     ui.name.addEventListener("input", onNameEdited);
@@ -220,6 +238,24 @@
   }
 
   // --------------------------------------------------- identify + lookup -----
+  // Called every detector tick. Repeatedly reads the live frame while it's
+  // steady until a confident name is found for the current scene; big motion
+  // (a card swap) resets and re-arms it.
+  function maybeAutoOcr(diff, state) {
+    if (!settings) return;
+    if (settings.engine === "photo" || settings.engine === "vision") return;
+    if (state === "TAINTED") return;
+    const thr = settings.diffThreshold || 12;
+    if (diff > thr * 1.8) { if (identified) resetScene(); return; } // card swapped → re-arm
+    if (diff > thr) return;              // still moving → wait for it to settle
+    if (busy || identified) return;       // already working or already have this scene
+    if (ocrAttempts >= OCR_MAX_ATTEMPTS) return;
+    if (Date.now() - lastOcrAt < OCR_GAP_MS) return;
+    lastOcrAt = Date.now();
+    ocrAttempts++;
+    triggerCapture(false);
+  }
+
   async function triggerCapture(manual) {
     if (busy) return;
     busy = true;
@@ -245,19 +281,23 @@
       // (PriceCharting photo-CV can't ID glary toploader frames; the card NAME
       // is the reliable free signal — see background/ocr.js.)
       if (settings.engine !== "photo") {
-        setStatus("reading card…");
+        setStatus(manual ? "reading card…" : "scanning…");
         const t0o = performance.now();
-        const resp = await send("ocrIdentify", { dataUrl: still });
+        const resp = await send("ocrIdentify", { dataUrl: still, maskTop: MASK_TOP });
         const secs = ((performance.now() - t0o) / 1000).toFixed(1);
         const dbg = settings.debug && resp.ocr ? " · " + (resp.ocr.tokens || []).slice(0, 8).join(" ") : "";
         ui.foot.textContent = `${secs}s · OCR: ` +
           (resp.ocr && resp.ocr.tok ? resp.ocr.tok + "→" : "") +
           (resp.name || "(no name read)") + dbg;
         if (!resp.name) {
-          renderMatch(null); renderPrices(null); setMatchImage(null);
-          setStatus("couldn't read a card name — type it in and Search");
+          // No name this frame — keep the previous result visible and let the
+          // loop retry on the next steady frame (often the card isn't close yet).
+          setStatus(ocrAttempts >= OCR_MAX_ATTEMPTS
+            ? "couldn't read a card name — type it in and Search"
+            : "scanning… hold the card steady");
           return;
         }
+        identified = true; // got a confident name; stop re-reading this scene
         lastResults = resp.results || [];
         if (!resp.best) {
           fillFields({ name: resp.name, source: "ocr", confidence: resp.score });
@@ -347,6 +387,7 @@
   // last photo scan auto-filled — so a name search isn't polluted by stale
   // context. Fields you edited yourself are left alone.
   function onNameEdited() {
+    identified = true; // user is taking over — stop the auto-OCR loop overwriting them
     if (!autoFilled) return;
     if (ui.name.value.trim() === (autoFilled.name || "").trim()) return;
     if (ui.number.value === (autoFilled.number || "")) ui.number.value = "";
@@ -365,6 +406,7 @@
   }
 
   async function lookupFromFields() {
+    identified = true; // manual search — don't let the auto-OCR loop fight it
     const identity = currentIdentity();
     if (!identity.name && !identity.set) { setStatus("enter a card name to search"); return; }
     setStatus("looking up prices…");
@@ -486,13 +528,27 @@
       pollInterval: settings.pollInterval,
       diffThreshold: settings.diffThreshold,
     });
-    detector.onNewCard = () => triggerCapture(false);
-    detector.onTick = ({ diff, state }) => {
-      if (settings.debug) {
-        ui.foot.textContent = `diff ${diff} · ${state}` + (detector.tainted ? " · tainted(canvas)" : "");
-      } else if (state === "TAINTED") {
-        ui.foot.textContent = "auto-detect off (cross-origin video) — use Re-scan frame";
+    // For OCR (default), a detected new card just re-arms the read loop below
+    // (driven by onTick), which reads repeatedly until confident. The legacy
+    // photo/vision engines still identify one-shot on the new-card event.
+    detector.onNewCard = () => {
+      if (settings.engine === "photo" || settings.engine === "vision") {
+        triggerCapture(false);
+      } else {
+        resetScene();
       }
+    };
+    detector.onTick = ({ diff, state }) => {
+      // Diagnostics live on their OWN line so they never clobber the OCR result.
+      if (settings.debug) {
+        ui.diag.textContent = `diff ${diff} · ${state}` + (detector.tainted ? " · tainted" : "") +
+          (identified ? " · ID'd" : ` · try ${ocrAttempts}`);
+      } else if (state === "TAINTED") {
+        ui.diag.textContent = "auto-detect off (cross-origin video) — use Re-scan frame";
+      } else {
+        ui.diag.textContent = "";
+      }
+      maybeAutoOcr(diff, state);
     };
 
     watchForVideo();

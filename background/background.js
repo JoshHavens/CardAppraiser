@@ -60,8 +60,8 @@
       highlightGrade: "Ungraded",
       diffThreshold: 12,
       photoLanguage: "", // "" = All (English + Japanese), "english", "japanese"
-      ocrMaskTop: 0.14,  // fraction of the top of the frame masked before OCR (captions/banners)
-      ocrMaxW: 900,      // downscale width for OCR
+      ocrMaskTop: 0,     // default no mask; content script sets it per platform (eBay captions)
+      ocrMaxW: 1000,     // downscale width for OCR
       debug: false,
     };
     const stored = await api.storage.local.get(defaults);
@@ -270,8 +270,11 @@
             // no rate limit. See background/ocr.js for the why.
             const sOcr = await getSettings();
             const ocr = await self.CardOCR.identifyName(msg.dataUrl, {
-              maskTop: sOcr.ocrMaskTop,
-              maxW: sOcr.ocrMaxW,
+              // content script sends a platform-aware maskTop (0 on Whatnot,
+              // a small band on eBay for burned-in captions); fall back to the
+              // stored setting if it didn't.
+              maskTop: msg.maskTop != null ? msg.maskTop : sOcr.ocrMaskTop,
+              maxW: msg.maxW != null ? msg.maxW : sOcr.ocrMaxW,
             });
             if (!ocr.name) {
               sendResponse({ ok: true, name: null, ocr, results: [], best: null, prices: null });

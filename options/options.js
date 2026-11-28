@@ -10,8 +10,8 @@
     highlightGrade: "Ungraded",
     diffThreshold: 12,
     photoLanguage: "",
-    ocrMaskTop: 0.14,
-    ocrMaxW: 900,
+    ocrMaskTop: 0,
+    ocrMaxW: 1000,
     debug: false,
   };
 
