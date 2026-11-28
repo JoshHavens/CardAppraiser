@@ -28,8 +28,8 @@
   let identified = false;      // have a confident ID for the current scene
   let ocrAttempts = 0;
   let lastOcrAt = 0;
-  const OCR_GAP_MS = 1300;      // min gap between OCR attempts
-  const OCR_MAX_ATTEMPTS = 12;  // give up re-reading a scene after this many
+  const OCR_GAP_MS = 1200;      // min gap between OCR attempts
+  const OCR_MAX_ATTEMPTS = 24;  // give up re-reading a scene after this many
   const IS_EBAY = /ebay\.com/i.test(location.hostname);
   // eBay Live burns closed captions into the video (mask them); Whatnot doesn't,
   // and masking there would clip card names that sit high in a close-up frame.
@@ -246,10 +246,15 @@
     if (settings.engine === "photo" || settings.engine === "vision") return;
     if (state === "TAINTED") return;
     const thr = settings.diffThreshold || 12;
-    if (diff > thr * 1.8) { if (identified) resetScene(); return; } // card swapped → re-arm
-    if (diff > thr) return;              // still moving → wait for it to settle
-    if (busy || identified) return;       // already working or already have this scene
+    // Once the current card is identified, only a sizable scene change (a new
+    // card held up) re-arms scanning — mild wiggle / holo shimmer does not.
+    if (identified) { if (diff > thr * 2.5) resetScene(); return; }
+    // Not identified: scan on a steady cadence even while the card wiggles.
+    // Sellers rarely hold a card dead-still on these streams, and OCR tolerates
+    // mild motion; only skip the most violent (motion-blurred) frames.
+    if (busy) return;
     if (ocrAttempts >= OCR_MAX_ATTEMPTS) return;
+    if (diff > thr * 4) return;
     if (Date.now() - lastOcrAt < OCR_GAP_MS) return;
     lastOcrAt = Date.now();
     ocrAttempts++;
