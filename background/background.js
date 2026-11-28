@@ -59,7 +59,7 @@
       pollInterval: 1000,
       highlightGrade: "Ungraded",
       diffThreshold: 12,
-      photoLanguage: "", // "" = All (English + Japanese), "english", "japanese"
+      photoLanguage: "english", // "english" (default) | "japanese" | "" = All. Most cards shown are English.
       ocrMaskTop: 0,     // default no mask; content script sets it per platform (eBay captions)
       ocrMaxW: 1000,     // downscale width for OCR
       debug: false,
@@ -296,7 +296,9 @@
             for (const frac of HCROPS) {
               try {
                 const crop = await self.CardCV.cropFrac(stillH, frac, 760);
-                const r = await self.PriceCharting.photoSearch(crop, "pokemon-cards", "");
+                // Default to English (most cards shown are English); an empty
+                // stored value (old "All" default) also falls back to English.
+                const r = await self.PriceCharting.photoSearch(crop, "pokemon-cards", sH.photoLanguage || "english");
                 if (r.results && r.results.length) collected.push(...r.results);
                 attemptsH.push({ dist: r.bestDistance, top: r.results && r.results[0] ? r.results[0].title : null });
               } catch (e) {

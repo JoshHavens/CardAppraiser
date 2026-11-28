@@ -9,7 +9,7 @@
     pollInterval: 1000,
     highlightGrade: "Ungraded",
     diffThreshold: 12,
-    photoLanguage: "",
+    photoLanguage: "english",
     ocrMaskTop: 0,
     ocrMaxW: 1000,
     debug: false,
