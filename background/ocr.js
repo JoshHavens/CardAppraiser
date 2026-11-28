@@ -86,7 +86,16 @@
   // glare mangles leading letters ("Wobbuffet" -> "vwobbuffet"/"yvyobbuffet").
   // Still tight enough that garbled art text / background cards rarely hit.
   function matchSpecies(text, list) {
-    const toks = [...new Set((text.toLowerCase().match(/[a-z]{3,}/g) || []))];
+    const raw = text.toLowerCase().match(/[a-z]{3,}/g) || [];
+    const tokSet = new Set();
+    for (const t of raw) {
+      tokSet.add(t);
+      // Strip a trailing TCG suffix so "mewex"/"pikachugx"/"mewvmax" also match
+      // the base species (ex/gx/v cards are common among valuable cards).
+      const m = t.match(/^(.*?)(ex|gx|vmax|vstar|v)$/);
+      if (m && m[1].length >= 3) tokSet.add(m[1]);
+    }
+    const toks = [...tokSet];
     let best = null;
     for (const t of toks) {
       for (const name of list) {

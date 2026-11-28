@@ -286,9 +286,13 @@
 
             // 2) Photo-CV on two crops (large + center). Two keeps request
             // volume low (the per-IP 429 came from running ~7 at once).
+            // Cards are held UP from the bottom, so the card sits in the lower
+            // center and the TOP of the frame is background (a wall of packs).
+            // Crops that include the top match sealed products; these lower-
+            // biased crops exclude it. (Validated on real frames.)
             const HCROPS = [
-              { x: 0.08, y: 0.05, w: 0.84, h: 0.90 }, // large (card fills a close-up video frame)
-              { x: 0.20, y: 0.12, w: 0.60, h: 0.76 }, // center
+              { x: 0.10, y: 0.20, w: 0.80, h: 0.78 }, // lower-wide
+              { x: 0.20, y: 0.24, w: 0.58, h: 0.68 }, // lower-center (tighter)
             ];
             await self.PriceCharting.ensureSession();
             let collected = [], rl = false;
@@ -324,6 +328,12 @@
             let mergedH = [...byId.values()].sort(
               (a, b) => (a.distance != null ? a.distance : 1) - (b.distance != null ? b.distance : 1)
             );
+
+            // Drop sealed products (Booster Box/Pack, Tins, ETBs, decks…). A
+            // sealed-product match means the crop caught background clutter, not
+            // the held single card — that's the "Booster Box" wrong result.
+            const SEALED = /\b(booster|box|packs?|bundle|tin|collection|elite\s*trainer|etb|case|blister|premium|build\s*&?\s*battle|deck)\b/i;
+            mergedH = mergedH.filter((r) => !SEALED.test(r.title || ""));
 
             // 3) OCR re-rank: prefer candidates whose name matches the read
             // species (fixes e.g. Ralts when photo-CV's top-1 is wrong).
