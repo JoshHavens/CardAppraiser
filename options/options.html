@@ -13,11 +13,12 @@
     <label class="field">
       <span>Engine</span>
       <select id="engine">
-        <option value="photo">PriceCharting Photo Search (free, recommended)</option>
+        <option value="ocr">Card-name OCR (free, recommended)</option>
+        <option value="photo">PriceCharting Photo Search (free, legacy)</option>
         <option value="vision">Claude Vision (needs API key)</option>
       </select>
     </label>
-    <p class="hint">Auto-detection of a new card is always free (local frame diff). The engine only controls how a detected card is identified. <b>Photo Search</b> uses PriceCharting's own image recognition — free and no setup.</p>
+    <p class="hint">Auto-detection of a new card is always free (local frame diff). The engine only controls how a detected card is identified. <b>Card-name OCR</b> reads the card's name on-device (bundled Tesseract) and searches PriceCharting for it — free, no setup, works on glary stream frames where image search fails. Pick the right card from the match list to confirm.</p>
 
     <label class="field">
       <span>Card language</span>

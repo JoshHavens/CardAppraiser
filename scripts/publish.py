@@ -39,7 +39,9 @@ DIST_DIR = os.path.join(ROOT, "dist")
 API_BASE = "https://addons.mozilla.org/api/v5"
 
 # Files/dirs included in the packaged extension (manifest.json at zip root).
-INCLUDE = ["manifest.json", "background", "content", "options", "icons"]
+# `vendor` holds the bundled Tesseract.js OCR engine (wasm + traineddata) and
+# the Pokémon species list — required by the card-name OCR identify engine.
+INCLUDE = ["manifest.json", "background", "content", "options", "icons", "vendor"]
 
 
 def die(msg):

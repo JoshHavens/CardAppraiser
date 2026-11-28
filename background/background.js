@@ -16,6 +16,10 @@
   const priceCache = new Map();
   const CACHE_TTL_MS = 15 * 60 * 1000;
 
+  // PriceCharting's photo endpoint has a sustained per-IP rate limit. On a 429
+  // we stop scanning until this time to let it recover.
+  let photoBackoffUntil = 0;
+
   /**
    * Resolve as soon as any task yields a match with distance < threshold;
    * otherwise resolve with the best once all settle. Collects per-task
@@ -49,13 +53,15 @@
 
   async function getSettings() {
     const defaults = {
-      engine: "photo", // "photo" | "ocr" | "vision"
+      engine: "ocr", // "ocr" (card-name OCR, default) | "photo" (PriceCharting CV) | "vision"
       apiKey: "",
       model: "claude-haiku-4-5",
       pollInterval: 1000,
       highlightGrade: "Ungraded",
       diffThreshold: 12,
       photoLanguage: "", // "" = All (English + Japanese), "english", "japanese"
+      ocrMaskTop: 0.14,  // fraction of the top of the frame masked before OCR (captions/banners)
+      ocrMaxW: 900,      // downscale width for OCR
       debug: false,
     };
     const stored = await api.storage.local.get(defaults);
@@ -250,82 +256,92 @@
             break;
           }
 
+          case "warmOcr": {
+            // Spin up the Tesseract worker (loads the bundled wasm + traineddata)
+            // ahead of the first scan so it isn't slow. Best-effort.
+            if (self.CardOCR) self.CardOCR.getWorker().catch(() => {});
+            sendResponse({ ok: true });
+            break;
+          }
+
+          case "ocrIdentify": {
+            // Free local identify: OCR the card name, fuzzy-match it to the
+            // Pokémon species list, then run the existing name search. No API,
+            // no rate limit. See background/ocr.js for the why.
+            const sOcr = await getSettings();
+            const ocr = await self.CardOCR.identifyName(msg.dataUrl, {
+              maskTop: sOcr.ocrMaskTop,
+              maxW: sOcr.ocrMaxW,
+            });
+            if (!ocr.name) {
+              sendResponse({ ok: true, name: null, ocr, results: [], best: null, prices: null });
+              break;
+            }
+            const data = await lookupByIdentity({ name: ocr.name });
+            sendResponse({ ok: true, name: ocr.name, score: ocr.score, ocr, ...data });
+            break;
+          }
+
           case "photoIdentifyFast": {
-            // Run PriceCharting's photo CV on several crops IN PARALLEL, then
-            // ENSEMBLE: every crop returns ranked candidates, and cards that
-            // multiple crops independently agree on win over a single low-distance
-            // outlier. Crops range from generous (avoid clipping the card) to
-            // tight (small/far cards). ~1-2s. Cookies handled by ensureSession.
+            // Identify via PriceCharting's photo CV. Their endpoint has a
+            // SUSTAINED per-IP rate limit (a burst of 8 is fine, but many scans ×
+            // many crops over a stream trip 429). So keep TOTAL requests low:
+            // crops ordered center-first, run 2 at a time, and STOP as soon as one
+            // is a confident match (< 0.42). On 429, back off for a minute.
             const still = msg.dataUrl;
-            // A spatial GRID of card-shaped crops (left/center/right × upper/lower,
-            // plus one large) tiles the frame so the card is well-framed in at
-            // least one crop no matter where it's held/stood. PriceCharting's own
-            // recognizer judges which crop framed it (lowest distance wins) — more
-            // robust than guessing the card's location locally.
-            const GRID_CROPS = [
-              { label: "g0", frac: { x: 0.05, y: 0.12, w: 0.52, h: 0.64 } }, // left-upper
-              { label: "g1", frac: { x: 0.24, y: 0.12, w: 0.52, h: 0.64 } }, // center-upper
-              { label: "g2", frac: { x: 0.43, y: 0.12, w: 0.52, h: 0.64 } }, // right-upper
-              { label: "g3", frac: { x: 0.05, y: 0.28, w: 0.52, h: 0.64 } }, // left-lower
-              { label: "g4", frac: { x: 0.24, y: 0.28, w: 0.52, h: 0.64 } }, // center-lower
-              { label: "g5", frac: { x: 0.43, y: 0.28, w: 0.52, h: 0.64 } }, // right-lower
-              { label: "g6", frac: { x: 0.14, y: 0.08, w: 0.72, h: 0.84 } }, // large / close card
+            if (Date.now() < photoBackoffUntil) {
+              sendResponse({ ok: true, results: [], best: null, prices: null, attempts: [], rateLimited: true });
+              break;
+            }
+            const CROPS = [
+              { label: "c0", frac: { x: 0.24, y: 0.16, w: 0.52, h: 0.64 } }, // center (most common)
+              { label: "c1", frac: { x: 0.14, y: 0.08, w: 0.72, h: 0.84 } }, // large / close card
+              { label: "c2", frac: { x: 0.05, y: 0.18, w: 0.52, h: 0.64 } }, // left
+              { label: "c3", frac: { x: 0.43, y: 0.18, w: 0.52, h: 0.64 } }, // right
+              { label: "c4", frac: { x: 0.24, y: 0.30, w: 0.52, h: 0.60 } }, // center-lower (card on a stand)
             ];
             const fastSettings = await getSettings();
             const lang = fastSettings.photoLanguage; // "" All | "english" | "japanese"
             await self.PriceCharting.ensureSession();
-            const settled = await Promise.all(GRID_CROPS.map(async (cc) => {
-              try {
-                const crop = await self.CardCV.cropFrac(still, cc.frac, 760);
-                const r = await self.PriceCharting.photoSearch(crop, "pokemon-cards", lang);
-                return { label: cc.label, crop, results: r.results, bestDistance: r.bestDistance };
-              } catch (e) {
-                return { label: cc.label, error: String(e && e.message ? e.message : e) };
+
+            const attempts = [];
+            let best = null, rateLimited = false;
+            // Two crops at a time; stop at the first confident match.
+            for (let i = 0; i < CROPS.length && !rateLimited; i += 2) {
+              const batch = CROPS.slice(i, i + 2);
+              const rs = await Promise.all(batch.map(async (cc) => {
+                try {
+                  const crop = await self.CardCV.cropFrac(still, cc.frac, 760);
+                  const r = await self.PriceCharting.photoSearch(crop, "pokemon-cards", lang);
+                  return { cc, r, crop };
+                } catch (e) {
+                  return { cc, error: String(e && e.message ? e.message : e) };
+                }
+              }));
+              let good = false;
+              for (const xr of rs) {
+                if (xr.error) {
+                  attempts.push({ label: xr.cc.label, error: xr.error });
+                  if (/HTTP 429/.test(xr.error)) rateLimited = true;
+                  continue;
+                }
+                const top = xr.r.results[0];
+                attempts.push({ label: xr.cc.label, name: top ? top.title : null, distance: xr.r.bestDistance });
+                if (xr.r.results.length) {
+                  const d = xr.r.bestDistance != null ? xr.r.bestDistance : 1;
+                  if (!best || d < best.d) best = { res: xr.r, d, crop: xr.crop, label: xr.cc.label };
+                  if (d < 0.42) good = true;
+                }
               }
-            }));
-
-            const attempts = settled.map((s) => ({
-              label: s.label,
-              distance: s.bestDistance,
-              name: s.results && s.results[0] ? s.results[0].title : null,
-              error: s.error,
-            }));
-
-            // Aggregate candidates across crops by product. Track each product's
-            // best (lowest) distance, how often it was a crop's #1 (top1 votes),
-            // and the crop image where it scored best.
-            const byProduct = new Map();
-            for (const s of settled) {
-              if (!s.results) continue;
-              s.results.forEach((res, rank) => {
-                const pid = res.product_id;
-                const dist = res.distance != null ? res.distance : 1;
-                let cur = byProduct.get(pid);
-                if (!cur) { cur = { result: res, minDist: dist, top1: 0, cropImage: rank === 0 ? s.crop : null }; byProduct.set(pid, cur); }
-                if (dist < cur.minDist) { cur.minDist = dist; cur.result = res; cur.cropImage = s.crop; }
-                if (rank === 0) cur.top1 += 1;
-              });
+              if (good) break;
             }
-            if (byProduct.size === 0) { sendResponse({ ok: true, results: [], best: null, prices: null, attempts }); break; }
-
-            // Consensus score: lower distance is better; each crop that ranked
-            // this product #1 shaves 0.05 off (agreement beats a lone outlier).
-            const ranked = [...byProduct.values()]
-              .map((v) => ({ ...v, score: v.minDist - 0.05 * v.top1 }))
-              .sort((a, b) => a.score - b.score)
-              .slice(0, 8);
-            const winner = ranked[0];
-            const best = winner.result;
-            const prices = await pricesForUrl(best.url, best);
+            if (rateLimited) photoBackoffUntil = Date.now() + 60000;
+            if (!best) { sendResponse({ ok: true, results: [], best: null, prices: null, attempts, rateLimited }); break; }
+            const topF = best.res.results[0];
+            const pricesF = await pricesForUrl(topF.url, topF);
             sendResponse({
-              ok: true,
-              results: ranked.map((v) => v.result),
-              best, prices,
-              bestDistance: winner.minDist,
-              votes: winner.top1,
-              chosenLabel: "ensemble",
-              chosenCropImage: winner.cropImage,
-              attempts,
+              ok: true, results: best.res.results, best: topF, prices: pricesF,
+              bestDistance: best.d, chosenLabel: best.label, chosenCropImage: best.crop, attempts,
             });
             break;
           }

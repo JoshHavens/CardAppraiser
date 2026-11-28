@@ -241,7 +241,42 @@
         return;
       }
 
-      // Default engine: PriceCharting photo search. The background crops the
+      // Default engine: free local card-name OCR -> existing name search.
+      // (PriceCharting photo-CV can't ID glary toploader frames; the card NAME
+      // is the reliable free signal — see background/ocr.js.)
+      if (settings.engine !== "photo") {
+        setStatus("reading card…");
+        const t0o = performance.now();
+        const resp = await send("ocrIdentify", { dataUrl: still });
+        const secs = ((performance.now() - t0o) / 1000).toFixed(1);
+        const dbg = settings.debug && resp.ocr ? " · " + (resp.ocr.tokens || []).slice(0, 8).join(" ") : "";
+        ui.foot.textContent = `${secs}s · OCR: ` +
+          (resp.ocr && resp.ocr.tok ? resp.ocr.tok + "→" : "") +
+          (resp.name || "(no name read)") + dbg;
+        if (!resp.name) {
+          renderMatch(null); renderPrices(null); setMatchImage(null);
+          setStatus("couldn't read a card name — type it in and Search");
+          return;
+        }
+        lastResults = resp.results || [];
+        if (!resp.best) {
+          fillFields({ name: resp.name, source: "ocr", confidence: resp.score });
+          renderMatch(null); renderPrices(null); setMatchImage(null);
+          setStatus("read " + resp.name + " — no price match; edit & Search");
+          return;
+        }
+        fillFields({
+          name: resp.name, number: resp.best.number, set: resp.best.set,
+          edition: resp.best.edition, source: "ocr", confidence: resp.score,
+        });
+        renderMatch(resp.best, lastResults);
+        renderPrices(resp.prices);
+        setMatchImage((resp.prices && resp.prices.image) || resp.best.image);
+        setStatus("read: " + resp.name + " — verify ↓");
+        return;
+      }
+
+      // Legacy engine: PriceCharting photo search. The background crops the
       // frame several ways and races them in PARALLEL for a fast (~1-2s) result.
       setStatus("identifying…");
       const t0 = performance.now();
@@ -256,6 +291,10 @@
         ).join(" ") + (firstErr ? ` · ${String(firstErr).slice(0, 60)}` : "");
       }
 
+      if (resp.rateLimited) {
+        setStatus("⏳ PriceCharting rate-limited — pausing ~1 min");
+        return;
+      }
       if (!resp.best) {
         renderMatch(null); renderPrices(null); setMatchImage(null);
         setStatus("no photo match — see scores below");
@@ -435,8 +474,11 @@
     const resp = await send("getSettings");
     settings = resp.settings;
 
-    // Warm PriceCharting cookies now so the first scan isn't slowed by it.
+    // Warm PriceCharting cookies + the OCR worker now so the first scan is fast.
     send("warmSession").catch(() => {});
+    if (settings.engine !== "photo" && settings.engine !== "vision") {
+      send("warmOcr").catch(() => {});
+    }
 
     buildPanel();
 

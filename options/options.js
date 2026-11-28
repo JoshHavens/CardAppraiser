@@ -3,13 +3,15 @@
   const api = typeof browser !== "undefined" ? browser : chrome;
 
   const DEFAULTS = {
-    engine: "photo",
+    engine: "ocr",
     apiKey: "",
     model: "claude-haiku-4-5",
     pollInterval: 1000,
     highlightGrade: "Ungraded",
     diffThreshold: 12,
     photoLanguage: "",
+    ocrMaskTop: 0.14,
+    ocrMaxW: 900,
     debug: false,
   };
 
