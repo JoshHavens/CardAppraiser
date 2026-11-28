@@ -74,17 +74,49 @@
   // hidden (tabs.hide) background tab: navigate it to the search, wait for the
   // results table to render, then read the rows back with scripting. Invisible
   // to the user; results still show inline in the panel.
+  //
+  // IMPORTANT: the background is a non-persistent event page — when it suspends
+  // it loses in-memory state, so an in-memory tab id alone leaked a NEW tab on
+  // every wake ("opens a million tabs" -> severe lag). We instead track our
+  // created tab ids in storage (survives suspend), reuse the one still alive,
+  // and close every extra — including ones leaked by older versions.
   let searchTabId = null;
 
+  async function getTracked() {
+    try { const s = await api.storage.local.get("__searchTabs"); return Array.isArray(s.__searchTabs) ? s.__searchTabs : []; }
+    catch (e) { return []; }
+  }
+  async function setTracked(arr) {
+    try { await api.storage.local.set({ __searchTabs: arr }); } catch (e) {}
+  }
+
   async function getSearchTab() {
-    if (searchTabId != null) {
-      try { await api.tabs.get(searchTabId); return searchTabId; }
-      catch (e) { searchTabId = null; }
+    // Reuse the first tracked tab that still exists; close the rest.
+    let keep = null;
+    const alive = [];
+    for (const id of await getTracked()) {
+      try {
+        await api.tabs.get(id);
+        if (keep == null) { keep = id; alive.push(id); }
+        else { try { await api.tabs.remove(id); } catch (e) {} }
+      } catch (e) { /* already closed */ }
     }
-    const tab = await api.tabs.create({ url: "https://www.pricecharting.com/", active: false });
-    searchTabId = tab.id;
-    try { await api.tabs.hide(searchTabId); } catch (e) { /* needs tabHide perm; ok if visible */ }
-    return searchTabId;
+    if (keep == null) {
+      const tab = await api.tabs.create({ url: "https://www.pricecharting.com/", active: false });
+      try { await api.tabs.hide(tab.id); } catch (e) { /* needs tabHide perm; ok if visible */ }
+      keep = tab.id;
+      alive.push(tab.id);
+    }
+    searchTabId = keep;
+    await setTracked(alive);
+
+    // Sweep up any hidden PriceCharting tabs leaked by older builds (untracked).
+    try {
+      const hidden = await api.tabs.query({ hidden: true, url: "*://*.pricecharting.com/*" });
+      for (const t of hidden) { if (t.id !== keep) { try { await api.tabs.remove(t.id); } catch (e) {} } }
+    } catch (e) {}
+
+    return keep;
   }
 
   function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
