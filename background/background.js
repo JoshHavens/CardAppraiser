@@ -61,7 +61,7 @@
       diffThreshold: 12,
       photoLanguage: "english", // "english" (default) | "japanese" | "" = All. Most cards shown are English.
       ocrMaskTop: 0,     // default no mask; content script sets it per platform (eBay captions)
-      ocrMaxW: 1000,     // downscale width for OCR
+      ocrMaxW: 1000,     // downscale width for OCR (OCR runs in a worker, so this isn't the lag source)
       debug: false,
     };
     const stored = await api.storage.local.get(defaults);
@@ -265,12 +265,16 @@
           }
 
           case "identifyHybrid": {
-            // Photo API primary + OCR assist. PriceCharting's photo-CV is
-            // accurate on clean close-ups and returns the SPECIFIC card (number
-            // + variants) ranked by visual distance. We then let the local
-            // name-OCR re-rank WITHIN that candidate set — it can only promote a
-            // candidate the photo API already returned, so a garbled OCR token
-            // can never inject a wrong card (the Snorlax->Mew class of bug).
+            // OCR-GATED Photo API. The card's own NAME is the precision gate:
+            //  1. Read the name on-device (cheap, local). If the frame isn't
+            //     sharp enough to read a real species, DON'T guess and DON'T
+            //     call the photo API — this kills blurry-frame false positives
+            //     (the Bulbasaur/Mew confident-wrong bug) AND cuts the work that
+            //     was lagging the browser (no photo requests on bad frames).
+            //  2. Only once a name is read, use the photo API to pin the SPECIFIC
+            //     card (number + variants). Prefer candidates matching the read
+            //     species; if the photo API didn't frame it, trust the name and
+            //     text-search it. Either way the species is OCR-verified.
             const stillH = msg.dataUrl;
             if (Date.now() < photoBackoffUntil) {
               sendResponse({ ok: true, rateLimited: true, results: [], best: null, prices: null });
@@ -278,89 +282,85 @@
             }
             const sH = await getSettings();
 
-            // 1) OCR species read (local, free) — for re-ranking only.
+            // 1) OCR gate. Single pass by default (fast); thorough (2-pass) only
+            // on a manual Re-scan.
             let ocrH = null;
             try {
-              ocrH = await self.CardOCR.identifyName(stillH, { maskTop: msg.maskTop, maxW: sH.ocrMaxW });
-            } catch (e) { /* OCR is optional here */ }
+              ocrH = await self.CardOCR.identifyName(stillH, {
+                maskTop: msg.maskTop, maxW: sH.ocrMaxW, twoPass: !!msg.thorough,
+              });
+            } catch (e) { /* treat as no-name */ }
+            if (!ocrH || !ocrH.isCard) {
+              // Not a sharp card frame (blurry/motion) — don't guess, don't hit
+              // the photo API. This is the precision gate AND a big load saver.
+              sendResponse({ ok: true, best: null, results: [], prices: null, ocr: ocrH, noName: true });
+              break;
+            }
+            const species = ocrH.name ? ocrH.name.toLowerCase() : null;
 
-            // 2) Photo-CV on two crops (large + center). Two keeps request
-            // volume low (the per-IP 429 came from running ~7 at once).
-            // Cards are held UP from the bottom, so the card sits in the lower
-            // center and the TOP of the frame is background (a wall of packs).
-            // Crops that include the top match sealed products; these lower-
-            // biased crops exclude it. (Validated on real frames.)
+            // 2) Photo API on two lower-biased crops (card is held up from the
+            // bottom; the top of the frame is background clutter).
             const HCROPS = [
               { x: 0.10, y: 0.20, w: 0.80, h: 0.78 }, // lower-wide
               { x: 0.20, y: 0.24, w: 0.58, h: 0.68 }, // lower-center (tighter)
             ];
             await self.PriceCharting.ensureSession();
             let collected = [], rl = false;
-            const attemptsH = [];
             for (const frac of HCROPS) {
               try {
-                const crop = await self.CardCV.cropFrac(stillH, frac, 760);
-                // Default to English (most cards shown are English); an empty
-                // stored value (old "All" default) also falls back to English.
+                const crop = await self.CardCV.cropFrac(stillH, frac, 720);
                 const r = await self.PriceCharting.photoSearch(crop, "pokemon-cards", sH.photoLanguage || "english");
                 if (r.results && r.results.length) collected.push(...r.results);
-                attemptsH.push({ dist: r.bestDistance, top: r.results && r.results[0] ? r.results[0].title : null });
               } catch (e) {
-                const m = String(e && e.message ? e.message : e);
-                attemptsH.push({ error: m });
-                if (/HTTP 429/.test(m)) { rl = true; break; }
+                if (/HTTP 429/.test(String(e && e.message ? e.message : e))) { rl = true; break; }
               }
             }
             if (rl) {
               photoBackoffUntil = Date.now() + 60000;
-              sendResponse({ ok: true, rateLimited: true, results: [], best: null, prices: null, ocr: ocrH });
+              sendResponse({ ok: true, rateLimited: true, best: null, results: [], prices: null, ocr: ocrH });
               break;
             }
 
-            // Dedupe by product, keep the best (lowest) distance per card.
+            // Dedupe by product (best distance), drop sealed products.
             const byId = new Map();
             for (const r of collected) {
               const k = r.product_id || r.url;
-              const ex = byId.get(k);
               const d = r.distance != null ? r.distance : 1;
+              const ex = byId.get(k);
               if (!ex || d < (ex.distance != null ? ex.distance : 1)) byId.set(k, r);
             }
-            let mergedH = [...byId.values()].sort(
-              (a, b) => (a.distance != null ? a.distance : 1) - (b.distance != null ? b.distance : 1)
-            );
-
-            // Drop sealed products (Booster Box/Pack, Tins, ETBs, decks…). A
-            // sealed-product match means the crop caught background clutter, not
-            // the held single card — that's the "Booster Box" wrong result.
             const SEALED = /\b(booster|box|packs?|bundle|tin|collection|elite\s*trainer|etb|case|blister|premium|build\s*&?\s*battle|deck)\b/i;
-            mergedH = mergedH.filter((r) => !SEALED.test(r.title || ""));
+            let mergedH = [...byId.values()]
+              .filter((r) => !SEALED.test(r.title || ""))
+              .sort((a, b) => (a.distance != null ? a.distance : 1) - (b.distance != null ? b.distance : 1));
 
-            // 3) OCR re-rank: prefer candidates whose name matches the read
-            // species (fixes e.g. Ralts when photo-CV's top-1 is wrong).
-            let corroborated = false;
-            if (ocrH && ocrH.name && mergedH.length) {
-              const sp = ocrH.name.toLowerCase();
-              const hit = (t) => (t || "").toLowerCase().includes(sp);
-              corroborated = mergedH.some((r) => hit(r.title));
-              if (corroborated) {
-                mergedH.sort((a, b) => {
-                  const am = hit(a.title) ? 0 : 1, bm = hit(b.title) ? 0 : 1;
-                  if (am !== bm) return am - bm;
-                  return (a.distance != null ? a.distance : 1) - (b.distance != null ? b.distance : 1);
-                });
-              }
-            }
-
-            const bestH = mergedH[0] || null;
-            if (!bestH) {
-              sendResponse({ ok: true, results: [], best: null, prices: null, ocr: ocrH, attempts: attemptsH });
+            // 3) If the species was read, prefer photo candidates matching it.
+            const spHits = species ? mergedH.filter((r) => (r.title || "").toLowerCase().includes(species)) : [];
+            if (spHits.length) {
+              const bestH = spHits[0];
+              const pricesH = await pricesForUrl(bestH.url, bestH);
+              const ordered = spHits.concat(mergedH.filter((r) => !spHits.includes(r)));
+              sendResponse({ ok: true, best: bestH, results: ordered, prices: pricesH, ocr: ocrH, corroborated: true, bestDistance: bestH.distance });
               break;
             }
-            const pricesH = await pricesForUrl(bestH.url, bestH);
-            sendResponse({
-              ok: true, results: mergedH, best: bestH, prices: pricesH,
-              ocr: ocrH, corroborated, bestDistance: bestH.distance, attempts: attemptsH,
-            });
+            // Species read but the photo API didn't frame it → trust the name.
+            if (species) {
+              const nsH = await lookupByIdentity({ name: ocrH.name });
+              if (nsH.best) {
+                sendResponse({ ok: true, best: nsH.best, results: nsH.results, prices: nsH.prices, ocr: ocrH, corroborated: true, viaName: true, bestDistance: null });
+                break;
+              }
+            }
+            // No readable name, but it IS a sharp card frame (vocab gate passed)
+            // and the photo API returned real cards → trust its top match. Not
+            // corroborated, so the UI labels it "likely" and offers the picker.
+            if (mergedH.length) {
+              const bestH = mergedH[0];
+              const pricesH = await pricesForUrl(bestH.url, bestH);
+              sendResponse({ ok: true, best: bestH, results: mergedH, prices: pricesH, ocr: ocrH, corroborated: false, bestDistance: bestH.distance });
+              break;
+            }
+            sendResponse({ ok: true, best: null, results: [], prices: null, ocr: ocrH, noName: false });
             break;
           }
 

@@ -26,6 +26,27 @@
   const WHITELIST =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ";
 
+  // Words that appear on (English) Pokémon cards. Used as a "this is a sharp
+  // card frame" signal: a blurry frame reads ~none of these, so even when the
+  // name itself can't be read we can tell a real card from motion-blur garbage.
+  const CARD_VOCAB = [
+    "pokemon", "pokmon", "basic", "stage", "weakness", "resistance", "retreat",
+    "ability", "attack", "evolves", "trainer", "energy", "illus", "nintendo",
+    "creatures", "damage", "prize", "bench", "active", "discard", "opponent",
+    "flip", "coin", "asleep", "draw", "rule", "holo",
+  ];
+
+  function vocabHits(text) {
+    const toks = new Set(text.toLowerCase().match(/[a-z]{3,}/g) || []);
+    let h = 0;
+    for (const v of CARD_VOCAB) {
+      for (const t of toks) {
+        if (t === v || (t.length >= 5 && v.length >= 5 && (t.includes(v) || v.includes(t)))) { h++; break; }
+      }
+    }
+    return h;
+  }
+
   async function loadNames() {
     if (names) return names;
     if (namesPromise) return namesPromise;
@@ -180,15 +201,23 @@
 
     let text = await recognizeText(w, canvas, 11);
     let m = matchSpecies(text, list);
-    if (!m) {
+    // A second PSM-6 pass rescues some stylized full-art names but doubles the
+    // CPU cost, so only do it when asked (manual Re-scan) — the auto loop stays
+    // single-pass to keep the browser responsive.
+    if (!m && opts.twoPass) {
       text += " " + (await recognizeText(w, canvas, 6));
       m = matchSpecies(text, list);
     }
     const tokens = [...new Set((text.toLowerCase().match(/[a-z]{3,}/g) || []))].slice(0, 30);
+    const vocab = vocabHits(text);
     return {
       name: m ? cap(m.name) : null,
       score: m ? +(1 - m.norm).toFixed(2) : 0,
       tok: m ? m.tok : null,
+      vocab,
+      // A real, sharp card frame: either we read the species, or we saw enough
+      // card vocabulary. Blurry/motion frames fail both -> don't guess on them.
+      isCard: !!m || vocab >= 2,
       tokens,
     };
   }

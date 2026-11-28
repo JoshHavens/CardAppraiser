@@ -28,8 +28,8 @@
   let identified = false;      // have a confident ID for the current scene
   let ocrAttempts = 0;
   let lastOcrAt = 0;
-  const OCR_GAP_MS = 1200;      // min gap between identify attempts
-  const OCR_MAX_ATTEMPTS = 6;   // give up on a scene after this many (each hits the photo API)
+  const OCR_GAP_MS = 2500;      // min gap between identify attempts (keeps CPU/network load — and lag — down)
+  const OCR_MAX_ATTEMPTS = 6;   // give up on a scene after this many
   const IS_EBAY = /ebay\.com/i.test(location.hostname);
   // eBay Live burns closed captions into the video (mask them); Whatnot doesn't,
   // and masking there would clip card names that sit high in a close-up frame.
@@ -165,11 +165,11 @@
   function watchForVideo() {
     const tryAttach = () => { const v = findVideo(); if (v && v !== video) attachVideo(v); };
     tryAttach();
-    const obs = new MutationObserver(tryAttach);
-    obs.observe(document.body, { childList: true, subtree: true });
-    // Poll too: the MutationObserver on the top body won't see a video that
-    // appears inside an iframe's own document, and streams swap on SPA nav.
-    setInterval(tryAttach, 2000);
+    // Poll for the video (handles SPA nav / stream swaps / iframe players). We
+    // deliberately do NOT use a subtree MutationObserver here: on these pages
+    // the live chat mutates the DOM constantly, and re-scanning for the video on
+    // every chat message severely lags the browser. A 3s poll is plenty.
+    setInterval(tryAttach, 3000);
   }
 
   function attachVideo(v) {
@@ -265,7 +265,9 @@
     busy = true;
     try {
       // Capture the current frame once; the background derives crops from it.
-      const still = await captureStill(1200);
+      // 900px is plenty for OCR + the photo API and much cheaper to encode/pass
+      // than 1200 (encoding happens on the page thread, so smaller = less lag).
+      const still = await captureStill(900);
       if (!still) { setStatus("couldn't grab frame"); return; }
       ui.thumb.src = still;
 
@@ -287,34 +289,30 @@
       if (settings.engine !== "photo") {
         setStatus(manual ? "identifying…" : "scanning…");
         const t0h = performance.now();
-        const resp = await send("identifyHybrid", { dataUrl: still, maskTop: MASK_TOP });
+        const resp = await send("identifyHybrid", { dataUrl: still, maskTop: MASK_TOP, thorough: !!manual });
         const secs = ((performance.now() - t0h) / 1000).toFixed(1);
         if (resp.rateLimited) { setStatus("⏳ PriceCharting rate-limited — pausing ~1 min"); return; }
         const ocrName = resp.ocr && resp.ocr.name ? resp.ocr.name : null;
-        const dist = resp.bestDistance != null ? resp.bestDistance.toFixed(2) : "-";
         const dbg = settings.debug
-          ? ` · d${dist}${resp.corroborated ? " ✓ocr" : ""}` +
-            (resp.ocr && resp.ocr.tokens ? " · " + resp.ocr.tokens.slice(0, 6).join(" ") : "")
+          ? (resp.ocr && resp.ocr.tokens ? " · " + resp.ocr.tokens.slice(0, 6).join(" ") : "")
           : "";
-        ui.foot.textContent = `${secs}s · ${resp.best ? resp.best.title : "(no match)"}` +
-          (ocrName ? " · ocr:" + ocrName : "") + dbg;
+        ui.foot.textContent = `${secs}s · ${resp.best ? resp.best.title : (ocrName ? "read " + ocrName + ", pricing…" : "(frame unclear)")}` + dbg;
 
-        // No match, or only weak/uncorroborated matches (likely a bad frame):
-        // keep trying the next frame rather than committing junk.
-        const weak = !resp.corroborated && (resp.bestDistance == null || resp.bestDistance > 0.72);
-        if (!resp.best || (weak && ocrAttempts < OCR_MAX_ATTEMPTS)) {
-          setStatus(ocrAttempts >= OCR_MAX_ATTEMPTS
-            ? "no clear match — type a name & Search"
+        // Nothing committed unless the card's own name was read (OCR gate). A
+        // blurry/holo frame yields no name -> keep scanning rather than guess.
+        if (!resp.best) {
+          setStatus(resp.noName && ocrAttempts >= OCR_MAX_ATTEMPTS
+            ? "couldn't read the card — type a name & Search"
             : "scanning… hold the card up to the camera");
           return;
         }
 
-        identified = true; // got a usable match; stop re-scanning this scene
+        identified = true; // sharp card frame identified; stop re-scanning this scene
         lastResults = resp.results || [];
         fillFields({
-          name: (resp.best.title || "").replace(/\s*#.*$/, "").trim() || ocrName || resp.best.title,
+          name: ocrName || (resp.best.title || "").replace(/\s*#.*$/, "").trim(),
           number: resp.best.number, set: resp.best.set, edition: resp.best.edition,
-          source: resp.corroborated ? "photo+ocr" : "photo",
+          source: resp.corroborated ? (resp.viaName ? "name" : "photo+ocr") : "photo",
           confidence: resp.bestDistance != null ? Math.max(0, 1 - resp.bestDistance) : null,
         });
         renderMatch(resp.best, lastResults);
