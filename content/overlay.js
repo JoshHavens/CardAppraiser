@@ -28,8 +28,8 @@
   let identified = false;      // have a confident ID for the current scene
   let ocrAttempts = 0;
   let lastOcrAt = 0;
-  const OCR_GAP_MS = 1200;      // min gap between OCR attempts
-  const OCR_MAX_ATTEMPTS = 24;  // give up re-reading a scene after this many
+  const OCR_GAP_MS = 1200;      // min gap between identify attempts
+  const OCR_MAX_ATTEMPTS = 8;   // give up on a scene after this many (each hits the photo API)
   const IS_EBAY = /ebay\.com/i.test(location.hostname);
   // eBay Live burns closed captions into the video (mask them); Whatnot doesn't,
   // and masking there would clip card names that sit high in a close-up frame.
@@ -254,7 +254,7 @@
     // mild motion; only skip the most violent (motion-blurred) frames.
     if (busy) return;
     if (ocrAttempts >= OCR_MAX_ATTEMPTS) return;
-    if (diff > thr * 4) return;
+    if (diff > thr * 1.6) return;  // too much motion → blurry frame → skip (garbage/false matches)
     if (Date.now() - lastOcrAt < OCR_GAP_MS) return;
     lastOcrAt = Date.now();
     ocrAttempts++;
@@ -282,42 +282,46 @@
         return;
       }
 
-      // Default engine: free local card-name OCR -> existing name search.
-      // (PriceCharting photo-CV can't ID glary toploader frames; the card NAME
-      // is the reliable free signal — see background/ocr.js.)
+      // Default engine: Photo API primary + OCR assist. PriceCharting's photo-CV
+      // returns the specific card (number + ranked variants); the local name-OCR
+      // re-ranks within that set to fix a wrong top-1. See background identifyHybrid.
       if (settings.engine !== "photo") {
-        setStatus(manual ? "reading card…" : "scanning…");
-        const t0o = performance.now();
-        const resp = await send("ocrIdentify", { dataUrl: still, maskTop: MASK_TOP });
-        const secs = ((performance.now() - t0o) / 1000).toFixed(1);
-        const dbg = settings.debug && resp.ocr ? " · " + (resp.ocr.tokens || []).slice(0, 8).join(" ") : "";
-        ui.foot.textContent = `${secs}s · OCR: ` +
-          (resp.ocr && resp.ocr.tok ? resp.ocr.tok + "→" : "") +
-          (resp.name || "(no name read)") + dbg;
-        if (!resp.name) {
-          // No name this frame — keep the previous result visible and let the
-          // loop retry on the next steady frame (often the card isn't close yet).
+        setStatus(manual ? "identifying…" : "scanning…");
+        const t0h = performance.now();
+        const resp = await send("identifyHybrid", { dataUrl: still, maskTop: MASK_TOP });
+        const secs = ((performance.now() - t0h) / 1000).toFixed(1);
+        if (resp.rateLimited) { setStatus("⏳ PriceCharting rate-limited — pausing ~1 min"); return; }
+        const ocrName = resp.ocr && resp.ocr.name ? resp.ocr.name : null;
+        const dist = resp.bestDistance != null ? resp.bestDistance.toFixed(2) : "-";
+        const dbg = settings.debug
+          ? ` · d${dist}${resp.corroborated ? " ✓ocr" : ""}` +
+            (resp.ocr && resp.ocr.tokens ? " · " + resp.ocr.tokens.slice(0, 6).join(" ") : "")
+          : "";
+        ui.foot.textContent = `${secs}s · ${resp.best ? resp.best.title : "(no match)"}` +
+          (ocrName ? " · ocr:" + ocrName : "") + dbg;
+
+        // No match, or only weak/uncorroborated matches (likely a bad frame):
+        // keep trying the next frame rather than committing junk.
+        const weak = !resp.corroborated && (resp.bestDistance == null || resp.bestDistance > 0.72);
+        if (!resp.best || (weak && ocrAttempts < OCR_MAX_ATTEMPTS)) {
           setStatus(ocrAttempts >= OCR_MAX_ATTEMPTS
-            ? "couldn't read a card name — type it in and Search"
-            : "scanning… hold the card steady");
+            ? "no clear match — type a name & Search"
+            : "scanning… hold the card up to the camera");
           return;
         }
-        identified = true; // got a confident name; stop re-reading this scene
+
+        identified = true; // got a usable match; stop re-scanning this scene
         lastResults = resp.results || [];
-        if (!resp.best) {
-          fillFields({ name: resp.name, source: "ocr", confidence: resp.score });
-          renderMatch(null); renderPrices(null); setMatchImage(null);
-          setStatus("read " + resp.name + " — no price match; edit & Search");
-          return;
-        }
         fillFields({
-          name: resp.name, number: resp.best.number, set: resp.best.set,
-          edition: resp.best.edition, source: "ocr", confidence: resp.score,
+          name: (resp.best.title || "").replace(/\s*#.*$/, "").trim() || ocrName || resp.best.title,
+          number: resp.best.number, set: resp.best.set, edition: resp.best.edition,
+          source: resp.corroborated ? "photo+ocr" : "photo",
+          confidence: resp.bestDistance != null ? Math.max(0, 1 - resp.bestDistance) : null,
         });
         renderMatch(resp.best, lastResults);
         renderPrices(resp.prices);
         setMatchImage((resp.prices && resp.prices.image) || resp.best.image);
-        setStatus("read: " + resp.name + " — verify ↓");
+        setStatus((resp.corroborated ? "matched: " : "likely: ") + resp.best.title + " — verify ↓");
         return;
       }
 

@@ -91,10 +91,16 @@
     for (const t of toks) {
       for (const name of list) {
         if (Math.abs(name.length - t.length) > 3) continue;
-        const cap = name.length >= 8 ? 0.34 : name.length >= 6 ? 0.30 : 0.22;
+        // Short names (Mew, Muk, Abra…) must match EXACTLY — they're far too
+        // easy to hit from garbled/blurry OCR, which caused confident wrong IDs.
+        const cap = name.length >= 8 ? 0.30
+          : name.length >= 6 ? 0.25
+          : name.length >= 5 ? 0.20
+          : 0; // <=4 chars: exact only
         let norm = lev(t, name) / name.length;
-        if (t.length > name.length) {
-          // leading junk: compare the tail of the token against the name
+        if (t.length > name.length && name.length >= 6) {
+          // leading junk on a long-enough name: compare the token's tail
+          // ("rwebbuffet" -> "wobbuffet"). Not for short names (false-match risk).
           norm = Math.min(norm, lev(t.slice(t.length - name.length), name) / name.length);
         }
         if (norm > cap) continue;

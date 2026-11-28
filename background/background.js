@@ -264,6 +264,94 @@
             break;
           }
 
+          case "identifyHybrid": {
+            // Photo API primary + OCR assist. PriceCharting's photo-CV is
+            // accurate on clean close-ups and returns the SPECIFIC card (number
+            // + variants) ranked by visual distance. We then let the local
+            // name-OCR re-rank WITHIN that candidate set — it can only promote a
+            // candidate the photo API already returned, so a garbled OCR token
+            // can never inject a wrong card (the Snorlax->Mew class of bug).
+            const stillH = msg.dataUrl;
+            if (Date.now() < photoBackoffUntil) {
+              sendResponse({ ok: true, rateLimited: true, results: [], best: null, prices: null });
+              break;
+            }
+            const sH = await getSettings();
+
+            // 1) OCR species read (local, free) — for re-ranking only.
+            let ocrH = null;
+            try {
+              ocrH = await self.CardOCR.identifyName(stillH, { maskTop: msg.maskTop, maxW: sH.ocrMaxW });
+            } catch (e) { /* OCR is optional here */ }
+
+            // 2) Photo-CV on two crops (large + center). Two keeps request
+            // volume low (the per-IP 429 came from running ~7 at once).
+            const HCROPS = [
+              { x: 0.08, y: 0.05, w: 0.84, h: 0.90 }, // large (card fills a close-up video frame)
+              { x: 0.20, y: 0.12, w: 0.60, h: 0.76 }, // center
+            ];
+            await self.PriceCharting.ensureSession();
+            let collected = [], rl = false;
+            const attemptsH = [];
+            for (const frac of HCROPS) {
+              try {
+                const crop = await self.CardCV.cropFrac(stillH, frac, 760);
+                const r = await self.PriceCharting.photoSearch(crop, "pokemon-cards", "");
+                if (r.results && r.results.length) collected.push(...r.results);
+                attemptsH.push({ dist: r.bestDistance, top: r.results && r.results[0] ? r.results[0].title : null });
+              } catch (e) {
+                const m = String(e && e.message ? e.message : e);
+                attemptsH.push({ error: m });
+                if (/HTTP 429/.test(m)) { rl = true; break; }
+              }
+            }
+            if (rl) {
+              photoBackoffUntil = Date.now() + 60000;
+              sendResponse({ ok: true, rateLimited: true, results: [], best: null, prices: null, ocr: ocrH });
+              break;
+            }
+
+            // Dedupe by product, keep the best (lowest) distance per card.
+            const byId = new Map();
+            for (const r of collected) {
+              const k = r.product_id || r.url;
+              const ex = byId.get(k);
+              const d = r.distance != null ? r.distance : 1;
+              if (!ex || d < (ex.distance != null ? ex.distance : 1)) byId.set(k, r);
+            }
+            let mergedH = [...byId.values()].sort(
+              (a, b) => (a.distance != null ? a.distance : 1) - (b.distance != null ? b.distance : 1)
+            );
+
+            // 3) OCR re-rank: prefer candidates whose name matches the read
+            // species (fixes e.g. Ralts when photo-CV's top-1 is wrong).
+            let corroborated = false;
+            if (ocrH && ocrH.name && mergedH.length) {
+              const sp = ocrH.name.toLowerCase();
+              const hit = (t) => (t || "").toLowerCase().includes(sp);
+              corroborated = mergedH.some((r) => hit(r.title));
+              if (corroborated) {
+                mergedH.sort((a, b) => {
+                  const am = hit(a.title) ? 0 : 1, bm = hit(b.title) ? 0 : 1;
+                  if (am !== bm) return am - bm;
+                  return (a.distance != null ? a.distance : 1) - (b.distance != null ? b.distance : 1);
+                });
+              }
+            }
+
+            const bestH = mergedH[0] || null;
+            if (!bestH) {
+              sendResponse({ ok: true, results: [], best: null, prices: null, ocr: ocrH, attempts: attemptsH });
+              break;
+            }
+            const pricesH = await pricesForUrl(bestH.url, bestH);
+            sendResponse({
+              ok: true, results: mergedH, best: bestH, prices: pricesH,
+              ocr: ocrH, corroborated, bestDistance: bestH.distance, attempts: attemptsH,
+            });
+            break;
+          }
+
           case "ocrIdentify": {
             // Free local identify: OCR the card name, fuzzy-match it to the
             // Pokémon species list, then run the existing name search. No API,
